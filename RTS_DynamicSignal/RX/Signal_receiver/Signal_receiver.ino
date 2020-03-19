@@ -38,7 +38,8 @@
  * except "universal". The purpose is to indicate that transit signal controller
  * is going to enable necessary phase for first waiting transit in the queue.
  *
- * Transit is supposed to leave intersecrion after enabling necessary phase
+ * Transit departure, after enabling necessary phase and related timeout, is checked
+ * using check_old_line_departure() function before transition to the next state analysis
  */
 
 #include "Signal_receiver.h"
@@ -48,7 +49,6 @@
 
 #define START_BTN 12
 
-typedef String Line;
 SoftwareSerial BTserial(rx,tx);
 
 // Timers to leave state after specified time
@@ -88,14 +88,20 @@ typedef struct {
 
 boolean Start = 0;
 
+boolean allowed_to_dequeue = 0;
+
+boolean first_call = 0;
+
 input_config transit_signal_config = {
-    left_right_and_forward, 1, 0, 1, 0 // defines operation mode of transit signal controller
+    forward_right_and_left, 0, 0, 0, 0 // defines operation mode of transit signal controller
     };
 
 State state = S0_IDLE;
-Line old_transit_line = ""; // previous received line from BTserial (with vehicle num)
+Line old_transit_line = "initial data"; // previous received line from BTserial (with vehicle num)
 Line detected_transit_line = ""; // new received line from BTserial (with vehicle num)
 Line current_transit_line = ""; // first transit line from the queue (without vehicle num)
+
+String data = "", line_to_enqueue = "";
 
 void setup() {
   pinMode(LEFT_LED_PIN, OUTPUT);
@@ -104,22 +110,24 @@ void setup() {
   pinMode(BOTTOM_LED_PIN, OUTPUT);
   pinMode(AUX_LED_PIN, OUTPUT);
 
+  pinMode(START_BTN, INPUT_PULLUP);
+
   pinMode(rx, INPUT);
   pinMode(tx, OUTPUT);
   Serial.begin(9600);
-    Serial.println("Arduino with HC-05 is ready");
+  Serial.println("Arduino with HC-06 is ready");
  
-    // start communication with the HC-05 using 9600
-    BTserial.begin(9600);  
-    Serial.println("BTserial started at 9600");
+  // start communication with the HC-05 using 9600
+  BTserial.begin(9600);  
+  Serial.println("BTserial started at 9600");
 
   state_timer = millis(); // initial state_timer initialization
 }
 
 Line make_line(const uint16_t num,
-                 const Terminuses provenance,
-                 const Terminuses destination,
-                 std::initializer_list<Deviations> deviations = {}) {
+               const Terminuses provenance,
+               const Terminuses destination,
+               std::initializer_list<Deviations> deviations = {}) {
   // only involved signals will handle deviations transmitted
   // after certain sequence of defined values, others will ignore it
   Line line = String(num, DEC) + "<<" + String((uint8_t)provenance, HEX) + ">>" + String((uint8_t)destination, HEX) + "^^";
@@ -135,26 +143,30 @@ Line make_line(const uint16_t num,
 void read_transit_line() {
   if (!q_lines.isEmpty()) {
     current_transit_line = q_lines.front(); // get first wating transit in queue
+    /// Serial.print(line_to_enqueue);
   } else {
     current_transit_line = "";
   }  
 }
 
 void add_line_to_queue() {
-  String number, provenance, destination, deviations;
-  String data = "", line_to_enqueue = "";
-  if (BTserial.available() > 0) {
+  while (BTserial.available() > 0) {
     char buff = BTserial.read();
     data.concat(buff);
     if (buff == '}') {
+      // Serial.println("End of frame");
       detected_transit_line = data;
       data = "";
     }
-
+    
+    String number, provenance, destination, deviations;
+    
     // proceed to new line analysis if its different vehicle detected
     if (detected_transit_line != old_transit_line) {
-      // check validity of detected line data
+      // Serial.println("Lines are different");
+      // check validity of detected line data by verifying presence of any number between "{{" and "<<" (optional for robustness)
       if ((detected_transit_line.indexOf("<<") - detected_transit_line.indexOf("{{") + 2) > 2) {
+        Serial.println("Line is valid");
         number = detected_transit_line.substring(detected_transit_line.indexOf("{{") + 2, detected_transit_line.indexOf("<<"));
         provenance = detected_transit_line.substring(detected_transit_line.indexOf("<<") + 2, detected_transit_line.indexOf(">>"));
         destination = detected_transit_line.substring(detected_transit_line.indexOf(">>") + 2, detected_transit_line.indexOf("^^"));
@@ -165,25 +177,34 @@ void add_line_to_queue() {
         } else {
           line_to_enqueue.concat("#\n");
         }
+        // prevent irrelevant transit lines adding to queue
+        if (is_present_in_set(line_to_enqueue, left_lines) |
+            is_present_in_set(line_to_enqueue, forward_lines) |
+            is_present_in_set(line_to_enqueue, right_lines)) {
+          q_lines.enqueue(line_to_enqueue);
+          Serial.print(millis() / 1000);
+          Serial.print(" s -> ");
+          Serial.print("L");
+          Serial.print(line_to_enqueue);
+          Serial.println(" PUSHED");
+          Serial.print("Lines in queue: ");
+          Serial.println(q_lines.item_count());
+          Serial.print("Current state is: S");
+          Serial.println(state);
+          Serial.println(" ");
 
-        q_lines.enqueue(line_to_enqueue);
-        Serial.print(millis() / 1000);
-        Serial.print(" s -> ");
-        Serial.print("L");
-        Serial.print(line_to_enqueue);
-        Serial.println(" PUSHED");
-        Serial.print("Lines in queue: ");
-        Serial.println(q_lines.item_count());
-        Serial.print("Current state is: S");
-        Serial.println(state);
-        Serial.println(" ");
-        old_transit_line = detected_transit_line;
+          if(old_transit_line != "initial data") {
+            allowed_to_dequeue = 1;
+            Serial.println("Old line is allowed to dequeue");
+          }
+          old_transit_line = detected_transit_line;
+        }
       }
     }
   }
 }
 
-boolean check_line_to_serve(Line line,
+boolean is_present_in_set(Line line,
                             const std::vector<Line> &lines_set) {
   for (size_t line_no = 0; line_no < lines_set.size(); ++line_no) {
     if (line == lines_set[line_no]) {
@@ -193,25 +214,27 @@ boolean check_line_to_serve(Line line,
   return 0;
 }
 
-void serve_transit_line(const Line line) {
-  if (!q_lines.isEmpty()) {
-    if (line == q_lines.front()) { 
-      current_transit_line = q_lines.dequeue();
-      Serial.print(millis() / 1000);
-      Serial.print(" s -> ");
-      Serial.print("L");
-      Serial.print(line);
-      Serial.println(" SERVED");
-      Serial.print("Lines in queue: ");
-      Serial.println(q_lines.item_count());
-      if (!q_lines.isEmpty()) {
-        Serial.print("Waiting is L");
-        Serial.println(q_lines.front());
-      }
-      Serial.print("Current state is: S");
-      Serial.println(state);
-      Serial.println(" ");
+void check_old_line_departure() {
+  if(allowed_to_dequeue) {
+    Serial.print(millis() / 1000);
+    Serial.print(" s -> ");
+    Serial.print("L");
+    Serial.print(current_transit_line);
+    Serial.println(" SERVED");
+
+    if (!q_lines.isEmpty()) {
+      q_lines.dequeue();
+      Serial.print("Waiting is L");
+      Serial.println(q_lines.front());
     }
+    
+    Serial.print("Lines in queue: ");
+    Serial.println(q_lines.item_count());
+    Serial.print("Current state is: S");
+    Serial.println(state);
+    Serial.println(" ");
+    read_transit_line();
+    allowed_to_dequeue = 0;
   }
 }
 
@@ -283,9 +306,9 @@ void timed_automaton_run(const Line line) {
   case S1_WAIT:
     if (!Start) {
       state = S0_IDLE;
-    } else if (check_line_to_serve(line, left_lines) |
-               check_line_to_serve(line, forward_lines) |
-               check_line_to_serve(line, right_lines)) {
+    } else if (is_present_in_set(line, left_lines) |
+               is_present_in_set(line, forward_lines) |
+               is_present_in_set(line, right_lines)) {
       state = S2_BLINKING_ON;
       finish_at =
           millis() + blinking_duration; // define moment of stopping blinking
@@ -327,9 +350,9 @@ void timed_automaton_run(const Line line) {
 
   case S4_LEFT:
     if (millis() - state_timer >= t_turn_phase) {
-      if (check_line_to_serve(line, left_lines) & transit_signal_config.phase_extension_left) {
+      check_old_line_departure();
+      if (is_present_in_set(line, left_lines) & transit_signal_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -339,6 +362,7 @@ void timed_automaton_run(const Line line) {
 
   case S5_EXTENDED_LEFT:
     if (millis() - state_timer >= t_extended_turn_phase) {
+      check_old_line_departure();
       if (transit_signal_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
@@ -350,13 +374,12 @@ void timed_automaton_run(const Line line) {
 
   case S6_LEFT_FORWARD:
     if (millis() - state_timer >= t_turn_phase) {
-      if (check_line_to_serve(line, left_lines) & transit_signal_config.phase_extension_left) {
+      check_old_line_departure();
+      if (is_present_in_set(line, left_lines) & transit_signal_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
-        serve_transit_line(line);
-      } else if (check_line_to_serve(line, forward_lines) &
+      } else if (is_present_in_set(line, forward_lines) &
                  transit_signal_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -366,10 +389,10 @@ void timed_automaton_run(const Line line) {
 
   case S7_FORWARD:
     if (millis() - state_timer >= t_forward_phase) {
-      if (check_line_to_serve(line, forward_lines) &
+      check_old_line_departure();
+      if (is_present_in_set(line, forward_lines) &
           transit_signal_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -379,6 +402,7 @@ void timed_automaton_run(const Line line) {
 
   case S8_EXTENDED_FORWARD:
     if (millis() - state_timer >= t_extended_forward_phase) {
+      check_old_line_departure();
       if (transit_signal_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
@@ -390,14 +414,13 @@ void timed_automaton_run(const Line line) {
 
   case S9_FORWARD_RIGHT:
     if (millis() - state_timer >= t_turn_phase) {
-      if (check_line_to_serve(line, forward_lines) &
+      check_old_line_departure();
+      if (is_present_in_set(line, forward_lines) &
           transit_signal_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
-        serve_transit_line(line);
-      } else if (check_line_to_serve(line, right_lines) &
+      } else if (is_present_in_set(line, right_lines) &
                  transit_signal_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -407,10 +430,10 @@ void timed_automaton_run(const Line line) {
 
   case S10_RIGHT:
     if (millis() - state_timer >= t_turn_phase) {
-      if (check_line_to_serve(line, right_lines) &
+      check_old_line_departure();
+      if (is_present_in_set(line, right_lines) &
           transit_signal_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -420,6 +443,7 @@ void timed_automaton_run(const Line line) {
 
   case S11_EXTENDED_RIGHT:
     if (millis() - state_timer >= t_extended_turn_phase) {
+      check_old_line_departure();
       if (transit_signal_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
@@ -431,13 +455,12 @@ void timed_automaton_run(const Line line) {
 
   case S12_LEFT_RIGHT:
     if (millis() - state_timer >= t_turn_phase) {
-      if (check_line_to_serve(line, left_lines) & transit_signal_config.phase_extension_left) {
+      check_old_line_departure();
+      if (is_present_in_set(line, left_lines) & transit_signal_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
-        serve_transit_line(line);
-      } else if (check_line_to_serve(line, right_lines) &
+      } else if (is_present_in_set(line, right_lines) &
                  transit_signal_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
-        serve_transit_line(line);
       } else {
         state = S13_INHIBIT;
       }
@@ -458,7 +481,6 @@ void timed_automaton_run(const Line line) {
         state = S0_IDLE;
       } else {
         state = S15_LEFT_FORWARD_RIGHT;
-        serve_transit_line(line);
       }
       state_timer = millis();
     }
@@ -466,17 +488,15 @@ void timed_automaton_run(const Line line) {
 
   case S15_LEFT_FORWARD_RIGHT:
     if (millis() - state_timer >= t_all_directions_phase) {
-      if (check_line_to_serve(line, left_lines) & transit_signal_config.phase_extension_left) {
+      check_old_line_departure();
+      if (is_present_in_set(line, left_lines) & transit_signal_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
-        serve_transit_line(line);
-      } else if (check_line_to_serve(line, forward_lines) &
+      } else if (is_present_in_set(line, forward_lines) &
                  transit_signal_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
-        serve_transit_line(line);
-      } else if (check_line_to_serve(line, right_lines) &
+      } else if (is_present_in_set(line, right_lines) &
                  transit_signal_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
-        serve_transit_line(line);
       } else {
         state = S14_INHIBIT_ALL_MODE;
       }
@@ -490,35 +510,29 @@ void timed_automaton_run(const Line line) {
 }
 
 void do_at_leaving_hyperstate(const Line line) {
-  if (check_line_to_serve(line, left_lines) &
+  if (is_present_in_set(line, left_lines) &
       ((transit_signal_config.mode == forward_right_and_left) | (transit_signal_config.mode == individual))) {
     state = S4_LEFT;
-    serve_transit_line(line);
-  } else if ((check_line_to_serve(line, left_lines) |
-              check_line_to_serve(line, forward_lines)) &
+  } else if ((is_present_in_set(line, left_lines) |
+              is_present_in_set(line, forward_lines)) &
              (transit_signal_config.mode == left_forward_and_right)) {
     state = S6_LEFT_FORWARD;
-    serve_transit_line(line);
-  } else if (check_line_to_serve(line, forward_lines) &
+  } else if (is_present_in_set(line, forward_lines) &
              ((transit_signal_config.mode == left_right_and_forward) ||
               (transit_signal_config.mode == individual))) {
     state = S7_FORWARD;
-    serve_transit_line(line);
-  } else if ((check_line_to_serve(line, forward_lines) |
-              check_line_to_serve(line, right_lines)) &
+  } else if ((is_present_in_set(line, forward_lines) |
+              is_present_in_set(line, right_lines)) &
              (transit_signal_config.mode == forward_right_and_left)) {
     state = S9_FORWARD_RIGHT;
-    serve_transit_line(line);
-  } else if (check_line_to_serve(line, right_lines) &
+  } else if (is_present_in_set(line, right_lines) &
              ((transit_signal_config.mode == left_forward_and_right) |
               (transit_signal_config.mode == individual))) {
     state = S10_RIGHT;
-    serve_transit_line(line);
-  } else if ((check_line_to_serve(line, left_lines) |
-              check_line_to_serve(line, right_lines)) &
+  } else if ((is_present_in_set(line, left_lines) |
+              is_present_in_set(line, right_lines)) &
              (transit_signal_config.mode == left_right_and_forward)) {
     state = S12_LEFT_RIGHT;
-    serve_transit_line(line);
   } else {
     state = S1_WAIT;
   }
@@ -537,11 +551,16 @@ void loop() {
 
   delay(10);
 
+  add_line_to_queue();
+
+  delay(10);
+
   read_transit_line();
 
   delay(10);
 
-  add_line_to_queue();
+//  Serial.print("Current state is: S");
+//  Serial.println(state);
  
   delay(10);
 

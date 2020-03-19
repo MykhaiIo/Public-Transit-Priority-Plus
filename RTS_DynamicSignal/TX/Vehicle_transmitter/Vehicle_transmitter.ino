@@ -135,8 +135,8 @@ void loop()
   while (true)
   {
     
-    BTserial.print(transit_);
-    Serial.println(transit_);
+    BTserial.print(transit2);
+    Serial.println(transit2);
     delay(5000);
   }
 }

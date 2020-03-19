@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <SoftwareSerial.h>
 
+typedef String Line;
+
 typedef enum State {
   S0_IDLE,
   S1_WAIT,
@@ -117,8 +119,8 @@ enum class Deviations
 Line make_line(uint16_t num, Terminuses provenance, Terminuses destination, std::initializer_list<Deviations> deviations = {});
 void timed_automaton_run(Line line);
 void do_at_leaving_hyperstate(Line line);
-boolean check_line_to_serve(Line line, std::vector<Line> &lines_set);
-void serve_transit_line(Line line);
+boolean is_present_in_set(Line line, std::vector<Line> &lines_set);
+void check_old_line_departure();
 void read_transit_line();
 void add_line_to_queue();
 void print_transit_signal_mode();
