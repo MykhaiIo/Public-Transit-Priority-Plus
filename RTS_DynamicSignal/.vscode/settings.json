@@ -71,7 +71,8 @@
         "iterator_base": "cpp",
         "ostream_helpers": "cpp",
         "serstream": "cpp",
-        "string_iostream": "cpp"
+        "string_iostream": "cpp",
+        "array": "cpp"
     },
     "C_Cpp.errorSquiggles": "Enabled"
 }

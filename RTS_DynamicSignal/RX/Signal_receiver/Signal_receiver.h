@@ -121,9 +121,9 @@ void timed_automaton_run(Line line);
 void do_at_leaving_hyperstate(Line line);
 boolean is_present_in_set(Line line, std::vector<Line> &lines_set);
 void check_old_line_departure();
+boolean is_current_line_present();
 void read_transit_line();
-void add_line_to_queue();
-void print_transit_signal_mode();
+void handle_detected_line();
 
 //-----------------------------------// L  M  R
 const uint8_t LEFT_LED_PIN = 6;      // _______

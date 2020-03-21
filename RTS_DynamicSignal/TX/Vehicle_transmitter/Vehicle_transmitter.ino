@@ -130,13 +130,41 @@ Line transit4 = make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide, 1
 Line transit5 = make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill, 455);
 Line transit_ = make_line(35, Terminuses::Feytiat_Plein_Bois, Terminuses::Pl_W_Churchill, 233, {Deviations::Villagory});
 
+Line route_code = transit2; // test route code to transmit
+
+String received_data = "";
+String request = "", response = "";
+
+boolean allowed_to_response = 0;
+
 void loop()
 { 
-  while (true)
-  {
-    
-    BTserial.print(transit2);
-    Serial.println(transit2);
-    delay(5000);
+  allowed_to_response = 0;
+  while (BTserial.available() > 0) {
+  char buff = BTserial.read();
+  received_data.concat(buff);
+    if (buff == '?') {
+      request = received_data;
+      Serial.print("Request: ");
+      Serial.println(request);
+      received_data = "";
+      allowed_to_response = 1;
+    }
+
+    if (route_code.substring(route_code.indexOf("{{"), route_code.indexOf('}') + 1) 
+                                        == // if requested code matches to currently transmitted by vehicle
+        request.substring(request.indexOf("++") + 2, request.indexOf('?'))) {
+      response = "--" + route_code.substring(route_code.indexOf("{{"), route_code.indexOf('}') + 1) + "!;";
+    }
   }
+
+  if (allowed_to_response) {
+    BTserial.print(response);
+    Serial.print("Response sent ");
+    Serial.println(response);
+  } else {
+    BTserial.print(route_code);
+  }
+  Serial.println(route_code);
+  delay(100);
 }
