@@ -83,7 +83,7 @@ typedef struct {
 
   boolean phase_extension_right : 1;   // 1 enables right extended (XR on state diagram)
 
-  boolean deviations_handled : 1; // 0 makes signal ignore deviations in route's code
+  boolean deviations_handled : 1; // 0 makes system ignore deviations in route's code
 } input_config;
 
 boolean Start = 0; // configuration part
@@ -91,7 +91,7 @@ boolean Start = 0; // configuration part
 boolean allowed_to_form_line = 0;
 boolean allowed_to_handle_response = 0;
 
-input_config transit_signal_config = {
+input_config system_config = {
     forward_right_and_left, 0, 0, 0, 0 // defines operation mode of transit signal controller
     };
 
@@ -109,7 +109,7 @@ Line detected_transit_line = ""; // new received line from BTserial (with vehicl
 
 /* current line and line_to_enqueue template: NNN<<PP>>DD^^DV- ... DV-#\n
 *  Vehicle number is ommited as it is used only during adding to the queue analysis and 
-*  cannot be known during signal configuration by lines sets initialization
+*  cannot be known during system configuration by lines sets initialization
 *  These data is formed after detecting line, splitting its data 
 *  and reassembling it in line_to_enqueue variable. */
 Line current_transit_line = ""; // first transit line from the queue (without vehicle num)
@@ -208,7 +208,7 @@ void handle_detected_line() {
         line_to_enqueue = number + "<<" + 
                           provenance + ">>" + 
                           destination + "^^";
-        if (transit_signal_config.deviations_handled) {
+        if (system_config.deviations_handled) {
           line_to_enqueue.concat(deviations + "#\n");
         } else {
           line_to_enqueue.concat("#\n");
@@ -317,34 +317,34 @@ void check_old_line_departure() {
 void timed_automaton_run(const Line line) {
   switch (state) {
   case S0_IDLE:
-    // after entering in idle state all stored lines leave computer system
+    // after entering in idle state all stored lines leave the system
     while (!q_lines.isEmpty()) {
       q_lines.dequeue();
     }
 
     if (!Start) {
       state = S0_IDLE;
-    } else if (transit_signal_config.mode == universal) {
+    } else if (system_config.mode == universal) {
       state = S14_INHIBIT_ALL_MODE;
       Serial.println("Current mode is { <, ^, > }");
 
-      transit_signal_config.phase_extension_left
+      system_config.phase_extension_left
           ? Serial.println("Left phase extension is on")
           : Serial.println("Left phase extension is off");
-      transit_signal_config.phase_extension_forward
+      system_config.phase_extension_forward
           ? Serial.println("Forward phase extension is on")
           : Serial.println("Forward phase extension is off");
-      transit_signal_config.phase_extension_right
+      system_config.phase_extension_right
           ? Serial.println("Right phase extension is on")
           : Serial.println("Right phase extension is off");
-      transit_signal_config.deviations_handled
+      system_config.deviations_handled
           ? Serial.println("Deviations are handled")
           : Serial.println("Deviations are not handled");
 
       Serial.println(" ");
     } else {
       state = S1_WAIT;
-      switch (transit_signal_config.mode) {
+      switch (system_config.mode) {
       case individual:
         Serial.println("Current mode is { < } { ^ } { > }");
         break;
@@ -362,16 +362,16 @@ void timed_automaton_run(const Line line) {
         break;
       }
 
-      transit_signal_config.phase_extension_left
+      system_config.phase_extension_left
           ? Serial.println("Left phase extension is on")
           : Serial.println("Left phase extension is off");
-      transit_signal_config.phase_extension_forward
+      system_config.phase_extension_forward
           ? Serial.println("Forward phase extension is on")
           : Serial.println("Forward phase extension is off");
-      transit_signal_config.phase_extension_right
+      system_config.phase_extension_right
           ? Serial.println("Right phase extension is on")
           : Serial.println("Right phase extension is off");
-      transit_signal_config.deviations_handled
+      system_config.deviations_handled
           ? Serial.println("Deviations are handled")
           : Serial.println("Deviations are not handled");
 
@@ -428,7 +428,7 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_turn_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, left_lines) & 
-          transit_signal_config.phase_extension_left) {
+          system_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
       } else {
         state = S13_INHIBIT;
@@ -440,7 +440,7 @@ void timed_automaton_run(const Line line) {
   case S5_EXTENDED_LEFT:
     if (millis() - state_timer >= t_extended_turn_phase) {
       check_old_line_departure();
-      if (transit_signal_config.mode == universal) {
+      if (system_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
         state = S13_INHIBIT;
@@ -453,10 +453,10 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_turn_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, left_lines) & 
-          transit_signal_config.phase_extension_left) {
+          system_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
       } else if (is_present_in_set(line, forward_lines) &
-                 transit_signal_config.phase_extension_forward) {
+                 system_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
       } else {
         state = S13_INHIBIT;
@@ -469,7 +469,7 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_forward_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, forward_lines) &
-          transit_signal_config.phase_extension_forward) {
+          system_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
       } else {
         state = S13_INHIBIT;
@@ -481,7 +481,7 @@ void timed_automaton_run(const Line line) {
   case S8_EXTENDED_FORWARD:
     if (millis() - state_timer >= t_extended_forward_phase) {
       check_old_line_departure();
-      if (transit_signal_config.mode == universal) {
+      if (system_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
         state = S13_INHIBIT;
@@ -494,10 +494,10 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_turn_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, forward_lines) &
-          transit_signal_config.phase_extension_forward) {
+          system_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
       } else if (is_present_in_set(line, right_lines) &
-                 transit_signal_config.phase_extension_right) {
+                 system_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
       } else {
         state = S13_INHIBIT;
@@ -510,7 +510,7 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_turn_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, right_lines) &
-          transit_signal_config.phase_extension_right) {
+          system_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
       } else {
         state = S13_INHIBIT;
@@ -522,7 +522,7 @@ void timed_automaton_run(const Line line) {
   case S11_EXTENDED_RIGHT:
     if (millis() - state_timer >= t_extended_turn_phase) {
       check_old_line_departure();
-      if (transit_signal_config.mode == universal) {
+      if (system_config.mode == universal) {
         state = S14_INHIBIT_ALL_MODE;
       } else {
         state = S13_INHIBIT;
@@ -535,10 +535,10 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_turn_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, left_lines) & 
-          transit_signal_config.phase_extension_left) {
+          system_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
       } else if (is_present_in_set(line, right_lines) &
-                 transit_signal_config.phase_extension_right) {
+                 system_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
       } else {
         state = S13_INHIBIT;
@@ -569,13 +569,13 @@ void timed_automaton_run(const Line line) {
     if (millis() - state_timer >= t_all_directions_phase) {
       check_old_line_departure();
       if (is_present_in_set(line, left_lines) & 
-          transit_signal_config.phase_extension_left) {
+          system_config.phase_extension_left) {
         state = S5_EXTENDED_LEFT;
       } else if (is_present_in_set(line, forward_lines) &
-                 transit_signal_config.phase_extension_forward) {
+                 system_config.phase_extension_forward) {
         state = S8_EXTENDED_FORWARD;
       } else if (is_present_in_set(line, right_lines) &
-                 transit_signal_config.phase_extension_right) {
+                 system_config.phase_extension_right) {
         state = S11_EXTENDED_RIGHT;
       } else {
         state = S14_INHIBIT_ALL_MODE;
@@ -591,28 +591,28 @@ void timed_automaton_run(const Line line) {
 
 void do_at_leaving_hyperstate(const Line line) {
   if (is_present_in_set(line, left_lines) &
-      ((transit_signal_config.mode == forward_right_and_left) | 
-       (transit_signal_config.mode == individual))) {
+      ((system_config.mode == forward_right_and_left) | 
+       (system_config.mode == individual))) {
     state = S4_LEFT;
   } else if ((is_present_in_set(line, left_lines) |
               is_present_in_set(line, forward_lines)) &
-             (transit_signal_config.mode == left_forward_and_right)) {
+             (system_config.mode == left_forward_and_right)) {
     state = S6_LEFT_FORWARD;
   } else if (is_present_in_set(line, forward_lines) &
-             ((transit_signal_config.mode == left_right_and_forward) ||
-              (transit_signal_config.mode == individual))) {
+             ((system_config.mode == left_right_and_forward) ||
+              (system_config.mode == individual))) {
     state = S7_FORWARD;
   } else if ((is_present_in_set(line, forward_lines) |
               is_present_in_set(line, right_lines)) &
-             (transit_signal_config.mode == forward_right_and_left)) {
+             (system_config.mode == forward_right_and_left)) {
     state = S9_FORWARD_RIGHT;
   } else if (is_present_in_set(line, right_lines) &
-             ((transit_signal_config.mode == left_forward_and_right) |
-              (transit_signal_config.mode == individual))) {
+             ((system_config.mode == left_forward_and_right) |
+              (system_config.mode == individual))) {
     state = S10_RIGHT;
   } else if ((is_present_in_set(line, left_lines) |
               is_present_in_set(line, right_lines)) &
-             (transit_signal_config.mode == left_right_and_forward)) {
+             (system_config.mode == left_right_and_forward)) {
     state = S12_LEFT_RIGHT;
   } else {
     state = S1_WAIT;

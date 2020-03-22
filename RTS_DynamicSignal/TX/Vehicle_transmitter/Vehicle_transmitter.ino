@@ -119,7 +119,7 @@ Line transmitter_make_line(const uint16_t num,
                            const Terminuses destination,
                            const uint32_t vehicle_num,
                            std::initializer_list<Deviations> deviations = {}) {
-  // only involved signals will handle deviations transmitted
+  // only involved transit signal controllers will handle deviations transmitted
   // after certain sequence of defined values, others will ignore it
   // Vehicle number won't be analized during line-to-give-priority definition
   Line line = "{{" + String(num, DEC) + 
