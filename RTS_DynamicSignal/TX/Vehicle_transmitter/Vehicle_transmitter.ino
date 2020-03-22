@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include <SoftwareSerial.h>
 #include <ArduinoSTL.h>
-#include <stdarg.h>
-#include <map>
 #include <vector>
 #include <stdio.h>
 #include <initializer_list>
@@ -93,25 +91,18 @@ enum class Deviations
 
 SoftwareSerial BTserial(rx, tx);
 
-Line make_line(uint16_t num, Terminuses provenance, Terminuses destination, uint32_t vehicle_num, std::initializer_list<Deviations> deviations);
+Line transmitter_make_line(uint16_t num, Terminuses provenance, Terminuses destination, uint32_t vehicle_num, std::initializer_list<Deviations> deviations = {});
 
-Line make_line(const uint16_t num,
-               const Terminuses provenance,
-               const Terminuses destination,
-               const uint32_t vehicle_num,
-               std::initializer_list<Deviations> deviations = {}) {
-  // only involved signals will handle deviations transmitted
-  // after certain sequence of defined values, others will ignore it
-  // Vehicle number won't be analized during line-to-give-priority definition
-  Line line = "{{" + String(num, DEC) + "<<" + String((uint8_t)provenance, HEX) + ">>" + String((uint8_t)destination, HEX) + "^^";
-  const Deviations *p_deviations = deviations.begin();
-  while (p_deviations != deviations.end())
-  {
-    line += String((uint8_t)*p_deviations, HEX) + '-';
-    ++p_deviations;
-  }
-  return line + "##" + String(vehicle_num, HEX) + '}';
-}
+Line transit1 = transmitter_make_line(4, Terminuses::Pole_St_Lazare, Terminuses::Montjovis, 911);
+Line transit2 = transmitter_make_line(24, Terminuses::Fontgeaudrant, Terminuses::Pl_W_Churchill, 454);
+Line transit3 = transmitter_make_line(36, Terminuses::Condat_Versanas, Terminuses::Pl_W_Churchill, 257);
+Line transit4 = transmitter_make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide, 123);
+Line transit5 = transmitter_make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill, 455);
+Line transit_ = transmitter_make_line(35, Terminuses::Feytiat_Plein_Bois, Terminuses::Pl_W_Churchill, 233, {Deviations::Villagory});
+
+Line route_code = transit3; // test route code to transmit
+
+boolean allowed_to_response = 0;
 
 void setup()
 {
@@ -123,48 +114,70 @@ void setup()
   Serial.println("BTserial started at 9600");
 }
 
-Line transit1 = make_line(4, Terminuses::Pole_St_Lazare, Terminuses::Montjovis, 911);
-Line transit2 = make_line(24, Terminuses::Fontgeaudrant, Terminuses::Pl_W_Churchill, 454);
-Line transit3 = make_line(36, Terminuses::Condat_Versanas, Terminuses::Pl_W_Churchill, 257);
-Line transit4 = make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide, 123);
-Line transit5 = make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill, 455);
-Line transit_ = make_line(35, Terminuses::Feytiat_Plein_Bois, Terminuses::Pl_W_Churchill, 233, {Deviations::Villagory});
-
-Line route_code = transit2; // test route code to transmit
-
-String received_data = "";
-String request = "", response = "";
-
-boolean allowed_to_response = 0;
+Line transmitter_make_line(const uint16_t num,
+                           const Terminuses provenance,
+                           const Terminuses destination,
+                           const uint32_t vehicle_num,
+                           std::initializer_list<Deviations> deviations = {}) {
+  // only involved signals will handle deviations transmitted
+  // after certain sequence of defined values, others will ignore it
+  // Vehicle number won't be analized during line-to-give-priority definition
+  Line line = "{{" + String(num, DEC) + 
+              "<<" + String((uint8_t)provenance, HEX) + 
+              ">>" + String((uint8_t)destination, HEX) + 
+              "^^";
+  const Deviations *p_deviations = deviations.begin();
+  while (p_deviations != deviations.end())
+  {
+    line += String((uint8_t)*p_deviations, HEX) + '-';
+    ++p_deviations;
+  }
+  return line + 
+         "##" + String(vehicle_num, HEX) + '}';
+}
 
 void loop()
 { 
+  // Request template: ++{{NNN<<PP>>DD^^DV- ... DV-##VEHNUM}?
+  static String request_data = "";
+  String request = "", response = "";
   allowed_to_response = 0;
+  
   while (BTserial.available() > 0) {
   char buff = BTserial.read();
-  received_data.concat(buff);
+  request_data.concat(buff);
     if (buff == '?') {
-      request = received_data;
-      Serial.print("Request: ");
-      Serial.println(request);
-      received_data = "";
+      request = request_data;
+      request_data = "";
       allowed_to_response = 1;
     }
 
-    if (route_code.substring(route_code.indexOf("{{"), route_code.indexOf('}') + 1) 
-                                        == // if requested code matches to currently transmitted by vehicle
-        request.substring(request.indexOf("++") + 2, request.indexOf('?'))) {
-      response = "--" + route_code.substring(route_code.indexOf("{{"), route_code.indexOf('}') + 1) + "!;";
+    Serial.println(request);
+
+    if (route_code.substring(
+                route_code.indexOf("{{"), 
+                route_code.indexOf('}') + 1
+                            ) == // if requested code matches to currently transmitted by vehicle
+        request.substring(
+              request.indexOf("++") + 2, 
+              request.indexOf('?')
+              )
+        ) {
+      response = "--" + 
+                 route_code.substring(
+                          route_code.indexOf("{{"), 
+                          route_code.indexOf('}') + 1
+                                     ) + 
+                  "!;";
     }
   }
 
   if (allowed_to_response) {
     BTserial.print(response);
-    Serial.print("Response sent ");
     Serial.println(response);
+
   } else {
     BTserial.print(route_code);
   }
-  Serial.println(route_code);
   delay(100);
 }

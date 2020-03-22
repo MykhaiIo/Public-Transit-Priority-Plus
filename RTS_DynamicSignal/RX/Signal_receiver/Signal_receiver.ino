@@ -3,7 +3,7 @@
  * Created:   Wed Mar 10 2020
  * Processor: Arduino Uno
  *
- * Active button level is LOW
+ * Active START button level is LOW
  *
  * Modes of operation that enables specified directions are following:
  * individual:
@@ -60,19 +60,19 @@ unsigned long finish_at = 0;
 // Sets of used lines (from enum Lines) for the specific intersection
 // Lines are splitted by directions where transit need to go
 const std::vector<Line> left_lines{
-    make_line(36, Terminuses::Condat_Versanas, Terminuses::Pl_W_Churchill),
-    make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill)
+    receiver_make_line(36, Terminuses::Condat_Versanas, Terminuses::Pl_W_Churchill),
+    receiver_make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill)
 };
 const std::vector<Line> forward_lines{
-    make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide),
-    make_line(4, Terminuses::Pole_St_Lazare, Terminuses::Montjovis),
-    make_line(24, Terminuses::Fontgeaudrant, Terminuses::Pl_W_Churchill)
+    receiver_make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide),
+    receiver_make_line(4, Terminuses::Pole_St_Lazare, Terminuses::Montjovis),
+    receiver_make_line(24, Terminuses::Fontgeaudrant, Terminuses::Pl_W_Churchill)
     };
 
 const std::vector<Line> right_lines{};
 
 // Queue to store waiting transit
-DataQueue<Line> q_lines(10);
+DataQueue<Line> q_lines(3);
 
 typedef struct {
   uint8_t mode : 3;
@@ -86,7 +86,7 @@ typedef struct {
   boolean deviations_handled : 1; // 0 makes signal ignore deviations in route's code
 } input_config;
 
-boolean Start = 0;
+boolean Start = 0; // configuration part
 
 boolean allowed_to_form_line = 0;
 boolean allowed_to_handle_response = 0;
@@ -96,11 +96,23 @@ input_config transit_signal_config = {
     };
 
 State state = S0_IDLE;
+
+/* detected and old lines template: {{NNN<<PP>>DD^^DV- ... DV-##VEHNUM}, where
+*  NNN — line number (2 bytes, DEC)
+*  PP — provenance (1 byte, HEX)
+*  DD — destination (1 byte, HEX)
+*  DV — deviation (1 byte, HEX, optional)
+*  VEHNUM — vehicle number (4 byte, HEX)
+*  These data is received directly from vehicle transmitter. */
 Line old_transit_line = ""; // previous received line from BTserial (with vehicle num)
 Line detected_transit_line = ""; // new received line from BTserial (with vehicle num)
-Line current_transit_line = ""; // first transit line from the queue (without vehicle num)
 
-String line_data = "", line_to_enqueue = "", response_data = "", response = "";
+/* current line and line_to_enqueue template: NNN<<PP>>DD^^DV- ... DV-#\n
+*  Vehicle number is ommited as it is used only during adding to the queue analysis and 
+*  cannot be known during signal configuration by lines sets initialization
+*  These data is formed after detecting line, splitting its data 
+*  and reassembling it in line_to_enqueue variable. */
+Line current_transit_line = ""; // first transit line from the queue (without vehicle num)
 
 void setup() {
   pinMode(LEFT_LED_PIN, OUTPUT);
@@ -123,13 +135,16 @@ void setup() {
   state_timer = millis(); // initial state_timer initialization
 }
 
-Line make_line(const uint16_t num,
-               const Terminuses provenance,
-               const Terminuses destination,
-               std::initializer_list<Deviations> deviations = {}) {
+Line receiver_make_line(const uint16_t num,
+                        const Terminuses provenance,
+                        const Terminuses destination,
+                        std::initializer_list<Deviations> deviations = {}) {
   // only involved signals will handle deviations transmitted
   // after certain sequence of defined values, others will ignore it
-  Line line = String(num, DEC) + "<<" + String((uint8_t)provenance, HEX) + ">>" + String((uint8_t)destination, HEX) + "^^";
+  Line line = String(num, DEC) + 
+              "<<" + String((uint8_t)provenance, HEX) + 
+              ">>" + String((uint8_t)destination, HEX) + 
+              "^^";
   const Deviations *p_deviations = deviations.begin();
   while (p_deviations != deviations.end())
   {
@@ -148,6 +163,7 @@ void read_transit_line() {
 }
 
 void handle_detected_line() {
+  static String line_data = "";
   while (BTserial.available() > 0) {
     char buff = BTserial.read();
     if (buff == '{') { // start of route code frame
@@ -163,17 +179,35 @@ void handle_detected_line() {
       }
     }
     
+    Line line_to_enqueue = "";
+
     String number, provenance, destination, deviations;
     
-    // proceed to new line analysis if its different vehicle detected
+    // proceed to new line analysis if it is different vehicle detected
     if (detected_transit_line != old_transit_line) {
       // check validity of detected line data by verifying presence of any number between "{{" and "<<"
-      if ((detected_transit_line.indexOf("<<") - detected_transit_line.indexOf("{{") + 2) > 2) {
-        number = detected_transit_line.substring(detected_transit_line.indexOf("{{") + 2, detected_transit_line.indexOf("<<"));
-        provenance = detected_transit_line.substring(detected_transit_line.indexOf("<<") + 2, detected_transit_line.indexOf(">>"));
-        destination = detected_transit_line.substring(detected_transit_line.indexOf(">>") + 2, detected_transit_line.indexOf("^^"));
-        deviations = detected_transit_line.substring(detected_transit_line.indexOf("^^") + 2, detected_transit_line.indexOf('#'));
-        line_to_enqueue = number + "<<" + provenance + ">>" + destination + "^^";
+      if ((
+            detected_transit_line.indexOf("<<") - detected_transit_line.indexOf("{{") + 2
+          ) > 2) {
+        number = detected_transit_line.substring(
+                                      detected_transit_line.indexOf("{{") + 2, 
+                                      detected_transit_line.indexOf("<<")
+                                                );
+        provenance = detected_transit_line.substring(
+                                          detected_transit_line.indexOf("<<") + 2, 
+                                          detected_transit_line.indexOf(">>")
+                                                    );
+        destination = detected_transit_line.substring(
+                                          detected_transit_line.indexOf(">>") + 2, 
+                                          detected_transit_line.indexOf("^^")
+                                                     );
+        deviations = detected_transit_line.substring(
+                                          detected_transit_line.indexOf("^^") + 2, 
+                                          detected_transit_line.indexOf('#')
+                                                    );
+        line_to_enqueue = number + "<<" + 
+                          provenance + ">>" + 
+                          destination + "^^";
         if (transit_signal_config.deviations_handled) {
           line_to_enqueue.concat(deviations + "#\n");
         } else {
@@ -186,13 +220,12 @@ void handle_detected_line() {
           q_lines.enqueue(line_to_enqueue);
           Serial.print(millis() / 1000);
           Serial.print(" s -> ");
-          Serial.print("L");
           Serial.print(line_to_enqueue);
-          Serial.println(" PUSHED");
-          Serial.print("Lines in queue: ");
-          Serial.println(q_lines.item_count());
-          Serial.print("Current state is: S");
-          Serial.println(state);
+          Serial.print(" PUSHED");
+          Serial.println("Lines in queue: ");
+          Serial.print(q_lines.item_count());
+          Serial.println("Current state is: S");
+          Serial.print(state);
           Serial.println(" ");
           old_transit_line = detected_transit_line;
         }
@@ -204,6 +237,7 @@ void handle_detected_line() {
 boolean is_present_in_set(Line line,
                             const std::vector<Line> &lines_set) {
   for (size_t line_no = 0; line_no < lines_set.size(); ++line_no) {
+    // OR operation of line and each set element comparison
     if (line == lines_set[line_no]) {
       return 1;
     }
@@ -213,12 +247,15 @@ boolean is_present_in_set(Line line,
 
 boolean is_current_line_present() {
   String request = "++" + detected_transit_line + '?';
-  Serial.print("Request: ");
-  Serial.println(request);
   BTserial.print(request);
-  response = "";
+  Serial.println(request);
+
 
   delay(200);
+
+  // Response template: --{{NNN<<PP>>DD^^DV- ... DV-##VEHNUM}!;
+  String response = "";
+  static String response_data = "";
 
   while (BTserial.available() > 0) {
     char buff = BTserial.read();
@@ -226,21 +263,26 @@ boolean is_current_line_present() {
       allowed_to_handle_response = 1;
     }
     if(allowed_to_handle_response) {
-      response_data = BTserial.readStringUntil(';'); // to activate timeout procedure
+      response_data = BTserial.readStringUntil(';'); // to trigger timeout procedure
       response = response_data;
       response_data = "";
       allowed_to_handle_response = 0;
     }
   }
 
-  Serial.println(response);
+    Serial.println(response);
 
   if (
-      (response.substring(response.indexOf('-') + 1, response.indexOf('!')) 
-                                                    == // if response's line matches to currently interacting
-      detected_transit_line.substring(detected_transit_line.indexOf("{{"), detected_transit_line.indexOf('}')+ 1)) 
-                                                    && // and this line is only one to be currently detected
-                                            q_lines.item_count() < 2
+        (response.substring(
+                response.indexOf('-') + 1, 
+                response.indexOf('!')
+                           ) == // if response's line matches to currently interacting
+        detected_transit_line.substring(
+                            detected_transit_line.indexOf("{{"), 
+                            detected_transit_line.indexOf('}') + 1
+                                       )
+        ) && // and this line is only one to be currently detected
+          q_lines.item_count() < 2
       ) {
         return 1;
   } else { // if response not detected (departure) or next line detected (previous is disconnected == departure)
@@ -255,18 +297,18 @@ void check_old_line_departure() {
     Serial.print(" s -> ");
     Serial.print("L");
     Serial.print(current_transit_line);
-    Serial.println(" SERVED");
+    Serial.print(" SERVED");
 
     if (!q_lines.isEmpty()) {
       q_lines.dequeue();
-      Serial.print("Waiting is L");
-      Serial.println(q_lines.front());
+      Serial.println("Waiting is ");
+      Serial.print(q_lines.front());
     }
     
-    Serial.print("Lines in queue: ");
-    Serial.println(q_lines.item_count());
-    Serial.print("Current state is: S");
-    Serial.println(state);
+    Serial.println("Lines in queue: ");
+    Serial.print(q_lines.item_count());
+    Serial.println("Current state is: S");
+    Serial.print(state);
     Serial.println(" ");
     read_transit_line();
   }

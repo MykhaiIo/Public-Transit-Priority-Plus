@@ -1,12 +1,12 @@
 #include <Arduino.h>
 #include <ArduinoSTL.h>
 #include <Queue.h>
-#include <stdarg.h>
-#include <map>
 #include <vector>
 #include <initializer_list>
 #include <stdio.h>
 #include <SoftwareSerial.h>
+
+#pragma once
 
 typedef String Line;
 
@@ -116,7 +116,7 @@ enum class Deviations
     Couzeix_Anglard
 };
 
-Line make_line(uint16_t num, Terminuses provenance, Terminuses destination, std::initializer_list<Deviations> deviations = {});
+Line receiver_make_line(uint16_t num, Terminuses provenance, Terminuses destination, std::initializer_list<Deviations> deviations = {});
 void timed_automaton_run(Line line);
 void do_at_leaving_hyperstate(Line line);
 boolean is_present_in_set(Line line, std::vector<Line> &lines_set);
