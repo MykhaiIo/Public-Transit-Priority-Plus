@@ -1,5 +1,8 @@
 {
-    "board": "arduino:avr:uno",
+    "board": "arduino:avr:mega",
     "output": "/build",
-    "sketch": "RTS_DynamicSignal.ino"
+    "sketch": "RX\\Signal_receiver\\Signal_receiver.ino",
+    "port": "COM3",
+    "programmer": "AVR ISP",
+    "configuration": "cpu=atmega2560"
 }

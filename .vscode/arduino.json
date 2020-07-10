@@ -1,0 +1,8 @@
+{
+    "board": "arduino:avr:nano",
+    "output": "/build",
+    "sketch": "RTS_DynamicSignal\\TX\\Vehicle_transmitter\\Vehicle_transmitter.ino",
+    "port": "COM4",
+    "programmer": "AVR ISP",
+    "configuration": "cpu=atmega328old"
+}

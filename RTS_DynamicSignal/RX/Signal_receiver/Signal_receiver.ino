@@ -44,12 +44,12 @@
 
 #include "Signal_receiver.h"
 
-#define rx 2
-#define tx 3
+#define rx 15
+#define tx 14
 
-#define START_BTN 12
+#define START_BTN 26
 
-SoftwareSerial BTserial(rx,tx);
+// SoftwareSerial BTserial(rx,tx);
 
 // Timers to leave state after specified time
 unsigned long state_timer = 0;
@@ -59,20 +59,25 @@ unsigned long finish_at = 0;
 
 // Sets of used lines (from enum Lines) for the specific intersection
 // Lines are splitted by directions where transit need to go
-const std::vector<Line> left_lines{
-    receiver_make_line(36, Terminuses::Condat_Versanas, Terminuses::Pl_W_Churchill),
-    receiver_make_line(44, Terminuses::Solignac_Bourg, Terminuses::Pl_W_Churchill)
-};
-const std::vector<Line> forward_lines{
-    receiver_make_line(2, Terminuses::P_Curie, Terminuses::Pole_La_Bastide),
-    receiver_make_line(4, Terminuses::Pole_St_Lazare, Terminuses::Montjovis),
-    receiver_make_line(24, Terminuses::Fontgeaudrant, Terminuses::Pl_W_Churchill)
-    };
+const std::vector<Line> left_lines{};
 
-const std::vector<Line> right_lines{};
+const uint16_t _16A = (uint16_t)Lines_Kharkiv::_16A;
+
+const std::vector<Line> forward_lines{
+    receiver_make_line(23, Terminuses_Kharkiv::Saltivska, Terminuses_Kharkiv::Pivdenno_Shidna),
+    receiver_make_line(26, Terminuses_Kharkiv::Saltivske_tram_depot, Terminuses_Kharkiv::Pivdenno_Shidna),
+    receiver_make_line(8, Terminuses_Kharkiv::Saltivske_tram_depot, Terminuses_Kharkiv::mikrorayon_602),
+};
+
+const std::vector<Line> right_lines{
+    receiver_make_line(16, Terminuses_Kharkiv::Saltivska, Terminuses_Kharkiv::Saltivska),
+    receiver_make_line(_16A, Terminuses_Kharkiv::Saltivska, Terminuses_Kharkiv::Saltivska),
+    receiver_make_line(26, Terminuses_Kharkiv::Saltivske_tram_depot, Terminuses_Kharkiv::Lisopark),
+    receiver_make_line(27, Terminuses_Kharkiv::Saltivska, Terminuses_Kharkiv::Novozhanove),
+};
 
 // Queue to store waiting transit
-DataQueue<Line> q_lines(3);
+ArduinoQueue<Line> q_lines(3);
 
 typedef struct {
   uint8_t mode : 3;
@@ -92,15 +97,15 @@ boolean allowed_to_form_line = 0;
 boolean allowed_to_handle_response = 0;
 
 input_config system_config = {
-    forward_right_and_left, 0, 0, 0, 0 // defines operation mode of transit signal controller
+    universal, 0, 0, 0, 0 // defines operation mode of transit signal controller
     };
 
 State state = S0_IDLE;
 
 /* detected and old lines template: {{NNN<<PP>>DD^^DV- ... DV-##VEHNUM}, where
 *  NNN — line number (2 bytes, DEC)
-*  PP — provenance (1 byte, HEX)
-*  DD — destination (1 byte, HEX)
+*  PP — provenance (2 bytes, HEX)
+*  DD — destination (2 bytes, HEX)
 *  DV — deviation (1 byte, HEX, optional)
 *  VEHNUM — vehicle number (4 byte, HEX)
 *  These data is received directly from vehicle transmitter. */
@@ -123,29 +128,29 @@ void setup() {
 
   pinMode(START_BTN, INPUT_PULLUP);
 
-  pinMode(rx, INPUT);
+  pinMode(rx, INPUT_PULLUP);
   pinMode(tx, OUTPUT);
   Serial.begin(9600);
   Serial.println("Arduino with HC-06 is ready");
  
   // start communication with the HC-06 using 9600
-  BTserial.begin(9600);  
-  Serial.println("BTserial started at 9600");
+  Serial3.begin(38400);  
+  Serial.println("BTserial started at 38400");
 
   state_timer = millis(); // initial state_timer initialization
 }
 
 Line receiver_make_line(const uint16_t num,
-                        const Terminuses provenance,
-                        const Terminuses destination,
-                        std::initializer_list<Deviations> deviations = {}) {
+                        const Terminuses_Kharkiv provenance,
+                        const Terminuses_Kharkiv destination,
+                        std::initializer_list<Deviations_Kharkiv> deviations = {}) {
   // only involved signals will handle deviations transmitted
   // after certain sequence of defined values, others will ignore it
   Line line = String(num, DEC) + 
-              "<<" + String((uint8_t)provenance, HEX) + 
-              ">>" + String((uint8_t)destination, HEX) + 
+              "<<" + String((uint16_t)provenance, HEX) + 
+              ">>" + String((uint16_t)destination, HEX) + 
               "^^";
-  const Deviations *p_deviations = deviations.begin();
+  const Deviations_Kharkiv *p_deviations = deviations.begin();
   while (p_deviations != deviations.end())
   {
     line += String((uint8_t)*p_deviations, HEX) + '-';
@@ -164,8 +169,8 @@ void read_transit_line() {
 
 void handle_detected_line() {
   static String line_data = "";
-  while (BTserial.available() > 0) {
-    char buff = BTserial.read();
+  while (Serial3.available() > 0) {
+    char buff = Serial3.read();
     if (buff == '{') { // start of route code frame
       allowed_to_form_line = 1;
     }
@@ -221,10 +226,10 @@ void handle_detected_line() {
           Serial.print(millis() / 1000);
           Serial.print(" s -> ");
           Serial.print(line_to_enqueue);
-          Serial.print(" PUSHED");
-          Serial.println("Lines in queue: ");
-          Serial.print(q_lines.item_count());
-          Serial.println("Current state is: S");
+          Serial.println(" PUSHED");
+          Serial.print("Lines in queue: ");
+          Serial.println(q_lines.item_count());
+          Serial.print("Current state is: S");
           Serial.print(state);
           Serial.println(" ");
           old_transit_line = detected_transit_line;
@@ -236,7 +241,7 @@ void handle_detected_line() {
 
 boolean is_present_in_set(Line line,
                             const std::vector<Line> &lines_set) {
-  for (size_t line_no = 0; line_no < lines_set.size(); ++line_no) {
+  for (uint8_t line_no = 0; line_no < lines_set.size(); ++line_no) {
     // OR operation of line and each set element comparison
     if (line == lines_set[line_no]) {
       return 1;
@@ -247,8 +252,10 @@ boolean is_present_in_set(Line line,
 
 boolean is_current_line_present() {
   String request = "++" + detected_transit_line + '?';
-  BTserial.print(request);
+  Serial.print("Request: ");
+  Serial3.print(request);
   Serial.println(request);
+  Serial3.flush();
 
 
   delay(200);
@@ -257,19 +264,20 @@ boolean is_current_line_present() {
   String response = "";
   static String response_data = "";
 
-  while (BTserial.available() > 0) {
-    char buff = BTserial.read();
+  while (Serial3.available() > 0) {
+    char buff = Serial3.read();
     if(buff == '-') { // begin to handle response if start char matches
       allowed_to_handle_response = 1;
     }
     if(allowed_to_handle_response) {
-      response_data = BTserial.readStringUntil(';'); // to trigger timeout procedure
+      response_data = Serial3.readStringUntil(';'); // to trigger timeout procedure
       response = response_data;
       response_data = "";
       allowed_to_handle_response = 0;
     }
   }
 
+    Serial.print("Response: ");
     Serial.println(response);
 
   if (
@@ -284,34 +292,34 @@ boolean is_current_line_present() {
         ) && // and this line is only one to be currently detected
           q_lines.item_count() < 2
       ) {
+         Serial.println("Vehicle is still on intersection");
         return 1;
   } else { // if response not detected (departure) or next line detected (previous is disconnected == departure)
+        Serial.println("Vehicle has cleared intersection");
         return 0;
   }
   
 }
 
 void check_old_line_departure() {
+  Serial.print(millis() / 1000);
+  Serial.print(" s -> ");
   if(!is_current_line_present()) {
-    Serial.print(millis() / 1000);
-    Serial.print(" s -> ");
-    Serial.print("L");
     Serial.print(current_transit_line);
-    Serial.print(" SERVED");
+    Serial.println(" SERVED");
 
     if (!q_lines.isEmpty()) {
       q_lines.dequeue();
-      Serial.println("Waiting is ");
-      Serial.print(q_lines.front());
+      Serial.print("Waiting is ");
+      Serial.println(q_lines.front());
     }
-    
-    Serial.println("Lines in queue: ");
-    Serial.print(q_lines.item_count());
-    Serial.println("Current state is: S");
-    Serial.print(state);
-    Serial.println(" ");
-    read_transit_line();
   }
+  Serial.print("Lines in queue: ");
+  Serial.println(q_lines.item_count());
+  Serial.print("Current state is: S");
+  Serial.print(state);
+  Serial.println(" ");
+  read_transit_line();
 }
 
 void timed_automaton_run(const Line line) {
